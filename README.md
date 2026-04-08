@@ -1,8 +1,8 @@
 # fix-signal-oneplus13
 
-Fix signal and bootloop for OnePlus 13 CN on OxygenOS 15 / 16.
+Fix signal for OnePlus 13 CN on OxygenOS 16.
 
-[Download](https://github.com/K58/fix-signal-oneplus13/releases)
+[Download](https://github.com/stmtc233/fix-signal-oneplus13/releases)
 
 > [!WARNING]
 > **PSA: Anti-Rollback Protection**
@@ -24,29 +24,11 @@ Fix signal and bootloop for OnePlus 13 CN on OxygenOS 15 / 16.
 
 Download and install this module in Magisk (or other root manager).
 
-### How to fix bootloop
-
-Make sure you have this module installed before OTA updates.
-
-1. Finish an OTA system update, but DO NOT click Restart.
-
-2. If you are updating to **OxygenOS 15**, press the "Action" button under the module name in Magisk (or other root manager), make sure the patch is successful.
-    - Note: **OxygenOS 16** does not require bootloop fix. If you are updating to OxygenOS 16, you can skip this step and proceed to step 3.
-
-3. You MUST also install Magisk (or other root manager) to inactive slot.
-    - For Magisk: Magisk Manager -> Home -> Magisk (Install) -> Install to Inactive Slot (After OTA)
-
-4. Press "Restart" in System Update
-
-> [!WARNING]  
-> **This module will modify `dtbo` partition to fix bootloop.** <br>
-> Do NOT lock the bootloader with modified `dtbo` (or any other partition) in **any** slot.
-
 ### How to relock bootloader
 
 **Please don't.**
 
-Your device will **brick** if you relock the bootloader with any modifications to the system partition in **any** slot (e.g., root, dtbo, custom kernel, etc.).
+Your device will **brick** if you relock the bootloader with any modifications to the system partition in **any** slot (e.g., root, custom kernel, etc.).
 
 > [!CAUTION]
 > **This module is for rooted users. You **MUST** keep your bootloader unlocked. Do NOT lock the bootloader.** <br>
@@ -73,6 +55,10 @@ Your device will **brick** if you relock the bootloader with any modifications t
 - [@docnok63](https://xdaforums.com/m/docnok63.4967345/)
 
 - [rapperskull](https://github.com/rapperskull)
+
+## Maintainer Workflow
+
+Run the `Update Module From Firmware Archive` workflow manually from the Actions tab to pull the latest `PJZ110` `image-firmware` package, refresh `oplusstanvbk.img`, update module metadata, and publish a new module release.
 
 
 

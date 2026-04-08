@@ -1,0 +1,239 @@
+name: Update Module From Firmware Archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: Upstream firmware archive repository
+        required: true
+        default: stmtc233/oneplus_archive
+      device_code:
+        description: Device code to sync
+        required: true
+        default: PJZ110
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-module-from-archive
+  cancel-in-progress: false
+
+jobs:
+  update-module:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_REPO: ${{ inputs.source_repo }}
+      DEVICE_CODE: ${{ inputs.device_code }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq p7zip-full zip
+
+      - name: Resolve latest firmware release
+        id: firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          api_url="https://api.github.com/repos/${SOURCE_REPO}/releases?per_page=100"
+          releases_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api_url}")"
+
+          release_json="$(jq -c --arg device "${DEVICE_CODE}" '
+            map(select(
+              (.draft | not) and
+              (.prerelease | not) and
+              (.tag_name | startswith($device + "_"))
+            ))
+            | sort_by(.published_at // .created_at)
+            | reverse
+            | first
+          ' <<<"${releases_json}")"
+
+          if [[ -z "${release_json}" || "${release_json}" == "null" ]]; then
+            echo "No release found for ${DEVICE_CODE} in ${SOURCE_REPO}" >&2
+            exit 1
+          fi
+
+          asset_json="$(jq -c --arg device "${DEVICE_CODE}" '
+            .assets
+            | map(select(.name | test("^" + $device + "_.*-image-firmware\\.7z$")))
+            | first
+          ' <<<"${release_json}")"
+
+          if [[ -z "${asset_json}" || "${asset_json}" == "null" ]]; then
+            echo "No image-firmware archive found for ${DEVICE_CODE}" >&2
+            exit 1
+          fi
+
+          upstream_tag="$(jq -r '.tag_name' <<<"${release_json}")"
+          upstream_name="$(jq -r '.name' <<<"${release_json}")"
+          upstream_url="$(jq -r '.html_url' <<<"${release_json}")"
+          upstream_published="$(jq -r '.published_at' <<<"${release_json}")"
+          asset_name="$(jq -r '.name' <<<"${asset_json}")"
+          asset_url="$(jq -r '.browser_download_url' <<<"${asset_json}")"
+
+          firmware_version="$(sed -E "s/^${DEVICE_CODE}_([0-9.]+)-.*/\\1/" <<<"${asset_name}")"
+          if [[ -z "${firmware_version}" || "${firmware_version}" == "${asset_name}" ]]; then
+            echo "Failed to parse firmware version from ${asset_name}" >&2
+            exit 1
+          fi
+
+          IFS='.' read -r major minor patch build <<<"${firmware_version}"
+          : "${major:?Missing major version}" "${minor:?Missing minor version}" "${patch:?Missing patch version}" "${build:?Missing build version}"
+          printf -v version_code '%d%02d%02d%03d' \
+            "$((10#${major}))" \
+            "$((10#${minor}))" \
+            "$((10#${patch}))" \
+            "$((10#${build}))"
+
+          {
+            echo "upstream_tag=${upstream_tag}"
+            echo "upstream_name=${upstream_name}"
+            echo "upstream_url=${upstream_url}"
+            echo "upstream_published=${upstream_published}"
+            echo "asset_name=${asset_name}"
+            echo "asset_url=${asset_url}"
+            echo "firmware_version=${firmware_version}"
+            echo "version_code=${version_code}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Download and extract firmware image
+        id: image
+        shell: bash
+        env:
+          ASSET_NAME: ${{ steps.firmware.outputs.asset_name }}
+          ASSET_URL: ${{ steps.firmware.outputs.asset_url }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p work/extracted
+          curl -fL "${ASSET_URL}" -o "work/${ASSET_NAME}"
+          7z x -y "work/${ASSET_NAME}" "-owork/extracted" >/dev/null
+
+          image_path="$(find work/extracted -type f -name 'oplusstanvbk.img' -print -quit)"
+          if [[ -z "${image_path}" ]]; then
+            echo "oplusstanvbk.img was not found in ${ASSET_NAME}" >&2
+            exit 1
+          fi
+
+          cp "${image_path}" nvbk/oplusstanvbk.img
+          image_sha256="$(sha256sum nvbk/oplusstanvbk.img | awk '{print $1}')"
+          echo "sha256=${image_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Update module metadata
+        shell: bash
+        env:
+          FIRMWARE_VERSION: ${{ steps.firmware.outputs.firmware_version }}
+          VERSION_CODE: ${{ steps.firmware.outputs.version_code }}
+        run: |
+          set -euo pipefail
+
+          sed -i -E "s/^version=.*/version=${FIRMWARE_VERSION}/" module.prop
+          sed -i -E "s/^versionCode=.*/versionCode=${VERSION_CODE}/" module.prop
+          sed -i -E "s|^updateJson=.*|updateJson=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/update.json|" module.prop
+
+          cat > update.json <<EOF
+          {
+            "version": "${FIRMWARE_VERSION}",
+            "versionCode": ${VERSION_CODE},
+            "zipUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/fix-signal-oneplus13.zip",
+            "changelog": "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${FIRMWARE_VERSION}"
+          }
+          EOF
+
+      - name: Build module archives
+        shell: bash
+        env:
+          FIRMWARE_VERSION: ${{ steps.firmware.outputs.firmware_version }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/module
+          cp -r META-INF nvbk customize.sh module.prop post-fs-data.sh system.prop dist/module/
+
+          (
+            cd dist/module
+            zip -qr "../fix-signal-oneplus13-${FIRMWARE_VERSION}.zip" .
+          )
+
+          cp "dist/fix-signal-oneplus13-${FIRMWARE_VERSION}.zip" "dist/fix-signal-oneplus13.zip"
+
+      - name: Commit updated files
+        id: commit
+        shell: bash
+        env:
+          FIRMWARE_VERSION: ${{ steps.firmware.outputs.firmware_version }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add module.prop update.json nvbk/oplusstanvbk.img
+
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "head_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          git commit -m "chore: sync ${DEVICE_CODE} firmware ${FIRMWARE_VERSION}"
+          git push
+
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+          echo "head_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ steps.commit.outputs.head_sha }}
+          FIRMWARE_VERSION: ${{ steps.firmware.outputs.firmware_version }}
+          UPSTREAM_TAG: ${{ steps.firmware.outputs.upstream_tag }}
+          UPSTREAM_NAME: ${{ steps.firmware.outputs.upstream_name }}
+          UPSTREAM_URL: ${{ steps.firmware.outputs.upstream_url }}
+          UPSTREAM_PUBLISHED: ${{ steps.firmware.outputs.upstream_published }}
+          ASSET_NAME: ${{ steps.firmware.outputs.asset_name }}
+          IMAGE_SHA256: ${{ steps.image.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notes_file="$(mktemp)"
+          cat > "${notes_file}" <<EOF
+          Synced ${DEVICE_CODE} firmware ${FIRMWARE_VERSION}.
+
+          Upstream release: [${UPSTREAM_NAME}](${UPSTREAM_URL})
+          Upstream tag: \`${UPSTREAM_TAG}\`
+          Upstream published: ${UPSTREAM_PUBLISHED}
+          Source archive: \`${ASSET_NAME}\`
+          Extracted image: \`oplusstanvbk.img\`
+          SHA256: \`${IMAGE_SHA256}\`
+          EOF
+
+          if gh release view "${FIRMWARE_VERSION}" >/dev/null 2>&1; then
+            gh release edit "${FIRMWARE_VERSION}" \
+              --title "${FIRMWARE_VERSION}" \
+              --notes-file "${notes_file}"
+          else
+            gh release create "${FIRMWARE_VERSION}" \
+              --target "${TARGET_SHA}" \
+              --title "${FIRMWARE_VERSION}" \
+              --notes-file "${notes_file}"
+          fi
+
+          gh release upload "${FIRMWARE_VERSION}" \
+            "dist/fix-signal-oneplus13-${FIRMWARE_VERSION}.zip" \
+            "dist/fix-signal-oneplus13.zip" \
+            --clobber
