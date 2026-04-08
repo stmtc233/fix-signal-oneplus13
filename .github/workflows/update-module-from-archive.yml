@@ -149,7 +149,7 @@ jobs:
           {
             "version": "${FIRMWARE_VERSION}",
             "versionCode": ${VERSION_CODE},
-            "zipUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/fix-signal-oneplus13.zip",
+            "zipUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${FIRMWARE_VERSION}/fix-signal-oneplus13-${FIRMWARE_VERSION}.zip",
             "changelog": "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${FIRMWARE_VERSION}"
           }
           EOF
@@ -168,8 +168,6 @@ jobs:
             cd dist/module
             zip -qr "../fix-signal-oneplus13-${FIRMWARE_VERSION}.zip" .
           )
-
-          cp "dist/fix-signal-oneplus13-${FIRMWARE_VERSION}.zip" "dist/fix-signal-oneplus13.zip"
 
       - name: Commit updated files
         id: commit
@@ -235,5 +233,4 @@ jobs:
 
           gh release upload "${FIRMWARE_VERSION}" \
             "dist/fix-signal-oneplus13-${FIRMWARE_VERSION}.zip" \
-            "dist/fix-signal-oneplus13.zip" \
             --clobber
