@@ -1,7 +1,7 @@
 id=fix-signal-oneplus13
 name=Fixes for OnePlus 13
-version=16.0.7.201
-versionCode=160007201
+version=16.0.9.402
+versionCode=160009402
 author=Fly
 description=Fix signal for OnePlus 13 CN on OxygenOS 16.
 updateJson=https://raw.githubusercontent.com/stmtc233/fix-signal-oneplus13/main/update.json
